@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>CT / CBCT 阅片器</title>
+<style>
+:root{
+  --bg:#07090c; --panel:#0e1218; --panel2:#141a22; --line:#222b36;
+  --txt:#dfe7f0; --dim:#7d8b9c; --acc:#43d9c0; --acc2:#f0b429; --red:#ff6b6b;
+}
+*{box-sizing:border-box; -webkit-user-select:none; user-select:none;}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);
+  font:13px/1.45 -apple-system,"SF Pro Text","PingFang SC","Hiragino Sans GB",sans-serif;overflow:hidden}
+#app{display:flex;flex-direction:column;height:100%}
+
+header{display:flex;align-items:center;gap:16px;padding:8px 14px;background:linear-gradient(180deg,#12181f,#0b0f14);
+  border-bottom:1px solid var(--line);flex:0 0 auto}
+h1{font-size:14px;margin:0;font-weight:600;letter-spacing:.3px;white-space:nowrap}
+h1 span{color:var(--acc)}
+.meta{color:var(--dim);font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.spacer{flex:1}
+.wl{font-variant-numeric:tabular-nums;color:var(--acc2);font-size:12px;background:#0a0e13;
+  border:1px solid var(--line);padding:3px 9px;border-radius:6px;white-space:nowrap}
+
+.toolbar{display:flex;align-items:center;gap:8px;padding:6px 14px;background:#0b0f14;border-bottom:1px solid var(--line);flex:0 0 auto;flex-wrap:wrap}
+.btn{background:#161d26;border:1px solid #26313d;color:var(--txt);padding:5px 11px;border-radius:6px;
+  cursor:pointer;font-size:12px;transition:.12s;white-space:nowrap}
+.btn:hover{background:#1e2833;border-color:#35465a}
+.btn.on{background:var(--acc);color:#04231f;border-color:var(--acc);font-weight:600}
+.btn:active{transform:translateY(1px)}
+.sep{width:1px;height:18px;background:var(--line);margin:0 3px}
+
+main{flex:1;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:6px;padding:6px;min-height:0}
+.pane{position:relative;background:#03050700;background:#04070a;border:1px solid var(--line);border-radius:8px;
+  overflow:hidden;display:flex;flex-direction:column;min-height:0;min-width:0}
+.pane.active{border-color:#2b6d63}
+.cvwrap{position:relative;flex:1;min-height:0;cursor:crosshair}
+canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+.tag{position:absolute;left:9px;top:7px;font-size:11px;color:#9fb4c9;background:#0009;padding:2px 7px;
+  border-radius:5px;pointer-events:none;letter-spacing:.4px}
+.tag b{color:var(--acc);font-weight:600}
+.info2{position:absolute;right:9px;top:7px;font-size:10.5px;color:#7d8b9c;background:#0009;padding:2px 7px;
+  border-radius:5px;pointer-events:none;font-variant-numeric:tabular-nums}
+.foot{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:4px 9px 6px;background:#080b0f}
+.foot input[type=range]{flex:1;accent-color:var(--acc);height:16px;cursor:pointer}
+.foot .n{font-variant-numeric:tabular-nums;font-size:11px;color:var(--dim);min-width:58px;text-align:right}
+
+#threed .cvwrap{cursor:grab}
+#threed .cvwrap.drag{cursor:grabbing}
+.p3ctl{position:absolute;left:9px;bottom:9px;right:9px;display:flex;gap:10px;align-items:center;
+  background:#000a;padding:5px 9px;border-radius:6px;font-size:10.5px;color:#9fb4c9}
+.p3ctl input[type=range]{accent-color:var(--acc2);height:14px;width:100%}
+.p3ctl label{white-space:nowrap;display:flex;align-items:center;gap:5px;flex:1}
+
+.statusbar{flex:0 0 auto;display:flex;align-items:center;gap:5px;padding:4px 14px 6px;font-size:10.5px;
+  color:#4b5a6b;background:#080b0f;border-top:1px solid #141b23}
+.statusbar b{color:#2d3742;font-weight:400}
+.statusbar .spacer{flex:1}
+#loading{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#07090c;
+  z-index:99;flex-direction:column;gap:14px;color:var(--dim);font-size:13px}
+.spin{width:26px;height:26px;border:2px solid #24303d;border-top-color:var(--acc);border-radius:50%;
+  animation:sp .8s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+#toast{position:fixed;left:50%;top:56px;transform:translateX(-50%);background:#0f1a22;border:1px solid #2b4a52;
+  color:var(--acc);padding:7px 16px;border-radius:8px;font-size:12px;opacity:0;transition:.25s;pointer-events:none;z-index:100}
+#toast.show{opacity:1}
+</style>
+</head>
+<body>
+<div id="loading"><div class="spin"></div><div id="loadtxt">正在载入体数据…</div></div>
+<div id="app">
+  <header>
+    <h1>CT / CBCT <span>阅片器</span></h1>
+    <div class="meta" id="meta"></div>
+    <div class="spacer"></div>
+    <div class="wl" id="wl">W 3000 / L 800</div>
+  </header>
+
+  <div class="toolbar">
+    <span style="color:#5d6d7e;font-size:11.5px">窗宽窗位</span>
+    <button class="btn" data-w="3000" data-l="800">骨/牙</button>
+    <button class="btn" data-w="1800" data-l="700">细节</button>
+    <button class="btn" data-w="1000" data-l="0">软组织</button>
+    <button class="btn" data-w="5000" data-l="1000">全范围</button>
+    <div class="sep"></div>
+    <button class="btn on" id="btnMarks">左右标记</button>
+    <button class="btn" id="btnReset">重置视角</button>
+    <button class="btn" id="btnSave">导出当前视图 PNG</button>
+    <div class="sep"></div>
+    <span style="color:#5d6d7e;font-size:11.5px">3D</span>
+    <button class="btn" data-th="300" data-op="1.0">骨+牙</button>
+    <button class="btn" data-th="900" data-op="1.0">只看牙齿</button>
+    <button class="btn" data-th="150" data-op="0.55">半透明</button>
+    <button class="btn" id="btnSpin">自动旋转</button>
+  </div>
+
+  <main>
+    <div class="pane" id="pz">
+      <div class="cvwrap"><canvas></canvas><div class="tag">轴位 AXIAL <b>Z</b></div><div class="info2"></div></div>
+      <div class="foot"><input type="range" min="0" max="449" value="200"><span class="n"></span></div>
+    </div>
+    <div class="pane" id="py">
+      <div class="cvwrap"><canvas></canvas><div class="tag">冠状位 CORONAL <b>Y</b></div><div class="info2"></div></div>
+      <div class="foot"><input type="range" min="0" max="549" value="275"><span class="n"></span></div>
+    </div>
+    <div class="pane" id="px">
+      <div class="cvwrap"><canvas></canvas><div class="tag">矢状位 SAGITTAL <b>X</b></div><div class="info2"></div></div>
+      <div class="foot"><input type="range" min="0" max="549" value="275"><span class="n"></span></div>
+    </div>
+    <div class="pane" id="threed">
+      <div class="cvwrap"><canvas></canvas><div class="tag">三维重建 3D</div><div class="info2" id="vrInfo"></div>
+        <div class="p3ctl">
+          <label>阈值<input type="range" id="th" min="-200" max="1800" value="300"></label>
+          <label>透明<input type="range" id="op" min="10" max="100" value="100"></label>
+        </div>
+      </div>
+    </div>
+  </main>
+  <div class="statusbar" id="status">
+  <span>左键拖动 = 调窗宽窗位</span><b>·</b><span>单击 = 定位十字线</span><b>·</b><span>滚轮 = 换层</span><b>·</b>
+  <span>⌘/Ctrl+滚轮 = 缩放</span><b>·</b><span>Shift+拖动 = 平移</span><b>·</b><span>双击 = 复位</span><b>·</b>
+  <span>3D 拖动 = 旋转</span>
+  <span class="spacer"></span>
+  <span id="statusMsg" style="color:#43d9c0"></span>
+</div>
+</div>
+<div id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const state = {
+  info:null, shape:null, spacing:[1,1,1],
+  W:3000, L:800,
+  pos:{x:275, y:275, z:200},
+  zoom:{z:1,y:1,x:1}, off:{z:[0,0],y:[0,0],x:[0,0]},
+  vr:{az:0, el:0, th:300, op:1.0, zoom:1, spin:false},
+  marks:true
+};
+const panes = {};
+const cache = new Map();      // key -> {w,h,data:Int16Array}
+const MAXCACHE = 48;
+
+function toast(msg){ const t=$('#toast'); t.textContent=msg; t.classList.add('show');
+  clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove('show'),1200); }
+function msg(t){ const e=$('#statusMsg'); if(e) e.textContent = t; }
+
+// ---------- 初始化 ----------
+async function init(){
+  const info = await (await fetch('/api/info')).json();
+  state.info = info; state.shape = info.shape; state.spacing = info.spacing;
+  $('#meta').textContent = `${info.modality} · ${info.manufacturer} ${info.model} · ${info.shape[2]}×${info.shape[1]}×${info.shape[0]} · `
+    + `体素 ${info.spacing[0]}mm · 视野 ${(info.shape[2]*info.spacing[0]).toFixed(0)}×${(info.shape[1]*info.spacing[1]).toFixed(0)}×${(info.shape[0]*info.spacing[2]).toFixed(0)}mm · ${info.studydate}`;
+  // 初始定位：牙弓中心（XY 居中、Z 落在牙列高度）
+  state.pos.x = Math.round(info.shape[2]*0.50);
+  state.pos.y = Math.round(info.shape[1]*0.55);
+  state.pos.z = Math.round(info.shape[0]*0.45);
+  for(const k in state.pos) state.pos[k] = Math.max(0, state.pos[k]);
+  setupPane('z'); setupPane('y'); setupPane('x');
+  setup3D();
+  await refreshAll();
+  $('#loading').style.display='none';
+  requestVr();
+}
+
+function setupPane(axis){
+  const el = document.getElementById('p'+axis);
+  const cv = el.querySelector('canvas');
+  const ctx = cv.getContext('2d', {alpha:false});
+  const wrap = el.querySelector('.cvwrap');
+  const slider = el.querySelector('input');
+  const lbl = el.querySelector('.foot .n');
+  const info2 = el.querySelector('.info2');
+  const p = {axis, el, cv, ctx, wrap, slider, lbl, info2, img:null, iw:0, ih:0, active:false};
+  panes[axis] = p;
+
+  const axisMax = axis==='z' ? state.shape[0]-1 : state.shape[1]-1;
+  slider.max = axisMax;
+
+  slider.addEventListener('input', ()=>{ state.pos[axis] = +slider.value; refreshAll(); });
+
+  wrap.addEventListener('wheel', e=>{
+    e.preventDefault();
+    if(e.ctrlKey || e.metaKey){
+      const k = Math.exp(-e.deltaY*0.002);
+      state.zoom[axis] = Math.min(8, Math.max(0.4, state.zoom[axis]*k));
+      drawPane(p); return;
+    }
+    const d = Math.sign(e.deltaY);
+    const cur = state.pos[axis];
+    state.pos[axis] = Math.min(axisMax, Math.max(0, cur + d));
+    refreshAll();
+  }, {passive:false});
+
+  // 拖动调窗 / 单击定位
+  let drag=null;
+  wrap.addEventListener('pointerdown', e=>{
+    wrap.setPointerCapture(e.pointerId);
+    drag = {x:e.clientX, y:e.clientY, W:state.W, L:state.L, moved:false};
+    if(e.shiftKey) drag.pan = {...state.off[axis]};
+  });
+  wrap.addEventListener('pointermove', e=>{
+    if(!drag) return;
+    const dx = e.clientX-drag.x, dy = e.clientY-drag.y;
+    if(Math.abs(dx)+Math.abs(dy) > 3) drag.moved = true;
+    if(drag.pan){
+      state.off[axis] = [drag.pan[0]+dx, drag.pan[1]+dy];
+      drawPane(p);
+    } else if(drag.moved){
+      state.W = Math.max(20, Math.round(drag.W + dx*4));
+      state.L = Math.round(drag.L + dy*4);
+      updateWL(); redrawAll();
+    }
+  });
+  wrap.addEventListener('pointerup', e=>{
+    if(drag && !drag.moved){
+      const r = wrap.getBoundingClientRect();
+      setCrosshairFromPixel(p, e.clientX-r.left, e.clientY-r.top);
+    }
+    drag = null;
+  });
+  // 双击复位
+  wrap.addEventListener('dblclick', ()=>{ state.zoom[axis]=1; state.off[axis]=[0,0]; drawPane(p); });
+  new ResizeObserver(()=>drawPane(p)).observe(wrap);
+}
+
+function canvasFit(p){
+  const r = p.cv.getBoundingClientRect();
+  const dpr = Math.min(2, window.devicePixelRatio||1);
+  const W = Math.max(1, Math.round(r.width*dpr)), H = Math.max(1, Math.round(r.height*dpr));
+  if(p.cv.width!==W || p.cv.height!==H){ p.cv.width=W; p.cv.height=H; }
+  return {W, H, dpr};
+}
+
+function paneGeom(p){
+  const {W,H} = canvasFit(p);
+  if(!p.iw) return {W,H,scale:1,ox:0,oy:0,tw:0,th:0};
+  const fit = Math.min(W/p.iw, H/p.ih);
+  const scale = fit*state.zoom[p.axis];
+  const tw = p.iw*scale, th = p.ih*scale;
+  const ox = (W-tw)/2 + state.off[p.axis][0]*(W/ (p.cv.clientWidth||1));
+  const oy = (H-th)/2 + state.off[p.axis][1]*(H/ (p.cv.clientHeight||1));
+  return {W,H,scale,ox,oy,tw,th};
+}
+
+function setCrosshairFromPixel(p, px, py){
+  const {W,H,scale,ox,oy} = paneGeom(p);
+  const dpr = Math.min(2, window.devicePixelRatio||1);
+  const cx = px*dpr, cy = py*dpr;
+  const ix = (cx-ox)/scale, iy = (cy-oy)/scale;
+  if(ix<0||iy<0||ix>=p.iw||iy>=p.ih) return;
+  if(p.axis==='z'){ state.pos.x = Math.round(ix); state.pos.y = Math.round(iy); }
+  else if(p.axis==='y'){ state.pos.x = Math.round(ix); state.pos.z = Math.round((p.ih-1)-iy); }
+  else { state.pos.y = Math.round(ix); state.pos.z = Math.round((p.ih-1)-iy); }
+  // 注意：冠状/矢状画布做了上下翻转，z 需要反算
+  refreshAll();
+}
+
+// ---------- 取切片 ----------
+async function fetchSlice(axis, idx){
+  const key = axis+':'+idx;
+  if(cache.has(key)) return cache.get(key);
+  const url = `/api/slice?axis=${axis}&idx=${idx}&raw=1`;
+  const res = await fetch(url);
+  const buf = await res.arrayBuffer();
+  const [w,h] = res.headers.get('X-Dims').split(',').map(Number);
+  const ent = {w, h, data:new Int16Array(buf)};
+  if(cache.size >= MAXCACHE){ cache.delete(cache.keys().next().value); }
+  cache.set(key, ent);
+  return ent;
+}
+
+async function loadPane(p){
+  const axis = p.axis;
+  const idx = state.pos[axis];
+  const ent = await fetchSlice(axis, idx);
+  if(!ent) return;
+  p.raw = ent; p.iw = ent.w; p.ih = ent.h;
+  // 预取邻层
+  for(const d of [1,-1]){
+    const j = idx+d;
+    const n = axis==='z'?state.shape[0]:state.shape[1];
+    if(j>=0 && j<n) fetchSlice(axis, j);
+  }
+  p.slider.value = idx;
+  p.lbl.textContent = `${idx} / ${(axis==='z'?state.shape[0]-1:state.shape[1]-1)}`;
+  let mm;
+  if(axis==='z'){ mm = ((state.info.zrange?.[0]||0) + idx*state.spacing[2]).toFixed(1); }
+  else { mm = (idx*state.spacing[axis==='y'?0:1]).toFixed(1); }
+  p.info2.textContent = `${mm} mm`;
+  drawPane(p);
+}
+
+// 把 16bit 数据按当前窗宽窗位画到离屏 canvas
+function windowedCanvas(p){
+  const {w,h,data} = p.raw;
+  if(!p.off || p.off.width!==w || p.off.height!==h){
+    p.off = document.createElement('canvas'); p.off.width=w; p.off.height=h;
+    p.octx = p.off.getContext('2d', {alpha:false});
+    p.oimg = p.octx.createImageData(w,h);
+  }
+  const off = p.off, octx = p.octx, img = p.oimg;
+  const lo = state.L - state.W/2, k = 255/state.W;
+  const d = img.data;
+  let j=0;
+  for(let i=0;i<data.length;i++){
+    let v = (data[i]-lo)*k;
+    v = v<0?0:(v>255?255:v);
+    d[j++]=v; d[j++]=v; d[j++]=v; d[j++]=255;
+  }
+  octx.putImageData(img,0,0);
+  return off;
+}
+
+function drawPane(p){
+  if(!p.raw) return;
+  const {W,H,scale,ox,oy,tw,th} = paneGeom(p);
+  const c = p.ctx;
+  c.fillStyle='#04070a'; c.fillRect(0,0,W,H);
+  const src = windowedCanvas(p);
+  c.imageSmoothingEnabled = true; c.imageSmoothingQuality='high';
+  c.drawImage(src, ox, oy, tw, th);
+
+  // 十字线
+  const dpr = Math.min(2, window.devicePixelRatio||1);
+  let ix, iy;
+  if(p.axis==='z'){ ix=state.pos.x; iy=state.pos.y; }
+  else if(p.axis==='y'){ ix=state.pos.x; iy=(p.ih-1)-state.pos.z; }
+  else { ix=state.pos.y; iy=(p.ih-1)-state.pos.z; }
+  const px = ox + ix*scale, py = oy + iy*scale;
+  c.save();
+  c.strokeStyle='rgba(67,217,192,.75)'; c.lineWidth=1*dpr;
+  c.setLineDash([5*dpr,4*dpr]);
+  c.beginPath(); c.moveTo(px,0); c.lineTo(px,H); c.moveTo(0,py); c.lineTo(W,py); c.stroke();
+  c.restore();
+
+  // 比例尺
+  const mmPerPx = state.spacing[0];
+  const barMm = 10;
+  const barPx = barMm/mmPerPx*scale;
+  c.fillStyle='rgba(0,0,0,.55)';
+  c.fillRect(W-24- barPx, H-24, barPx+16, 18);
+  c.fillStyle='#8fa6bb'; c.font = `${11*dpr}px -apple-system`; c.textAlign='left';
+  c.fillText('10mm', W-16-barPx, H-30);
+  c.fillStyle='#cfdbe7';
+  c.fillRect(W-16-barPx, H-18, barPx, 2*dpr);
+
+  if(state.marks) drawMarks(p, {W,H,scale,ox,oy,tw,th});
+}
+
+// 画 R/L、前/后、上/下 方位标记
+// 水平方向：优先落在图像两侧的空白里（紧贴图像、绝不压解剖）；没有空白就贴在窗格边缘
+function drawMarks(p, g){
+  const c = p.ctx;
+  const dpr = Math.min(2, window.devicePixelRatio||1);
+  const fs = 14*dpr;
+  c.font = `700 ${fs}px -apple-system,"PingFang SC",sans-serif`;
+  c.textAlign = 'center'; c.textBaseline = 'middle';
+
+  const chip = (txt, x, y, col) => {
+    const w = c.measureText(txt).width;
+    c.fillStyle = 'rgba(0,0,0,.5)';
+    c.fillRect(x - w/2 - 4*dpr, y - fs*0.72, w + 8*dpr, fs*1.44);
+    c.fillStyle = col;
+    c.fillText(txt, x, y);
+  };
+
+  const gapL = g.ox, gapR = g.W - (g.ox + g.tw);
+  const leftX  = gapL > 46*dpr ? g.ox/2 : Math.max(18*dpr, g.ox + 18*dpr);
+  const rightX = gapR > 46*dpr ? (g.ox + g.tw) + gapR/2 : Math.min(g.W - 18*dpr, g.ox + g.tw - 18*dpr);
+
+  let hl, hr, hcol = '#ffce4d';
+  if(p.axis === 'x'){ hl = '前 A'; hr = '后 P'; }     // 矢状位：左前右后
+  else { hl = 'R'; hr = 'L'; }                        // 轴位/冠状位：左屏=患者右
+  chip(hl, leftX, g.H/2, hcol);
+  chip(hr, rightX, g.H/2, '#ff8a8a');
+
+  let vl, vr, vcol = '#7fc4ff';
+  if(p.axis === 'z'){ vl = '前 A'; vr = '后 P'; }     // 轴位：上前下后
+  else { vl = '上 S'; vr = '下 I'; }
+  chip(vl, g.W/2, 18*dpr, vcol);
+  chip(vr, g.W/2, g.H - 18*dpr, '#9aa8b8');
+}
+
+function redrawAll(){ for(const k in panes) drawPane(panes[k]); }
+
+function updateWL(){
+  $('#wl').textContent = `W ${state.W} / L ${state.L}`;
+  document.querySelectorAll('[data-w]').forEach(b=>{
+    b.classList.toggle('on', +b.dataset.w===state.W && +b.dataset.l===state.L);
+  });
+}
+
+async function refreshAll(){
+  await Promise.all(Object.values(panes).map(p=>loadPane(p)));
+  updateWL();
+}
+
+// ---------- 3D ----------
+let vrReq = null, vrBusy = false, vrPending = false;
+function setup3D(){
+  const el = $('#threed'), cv = el.querySelector('canvas'), wrap = el.querySelector('.cvwrap');
+  const ctx = cv.getContext('2d', {alpha:false});
+  const p = {el, cv, ctx, wrap, img:null, zoom:1, ox:0, oy:0};
+  window._p3 = p;
+  let drag=null;
+  wrap.addEventListener('pointerdown', e=>{ wrap.setPointerCapture(e.pointerId);
+    drag={x:e.clientX,y:e.clientY,az:state.vr.az,el:state.vr.el}; wrap.classList.add('drag'); });
+  wrap.addEventListener('pointermove', e=>{
+    if(!drag) return;
+    state.vr.az = drag.az + (e.clientX-drag.x)*0.6;
+    state.vr.el = Math.max(-60, Math.min(60, drag.el - (e.clientY-drag.y)*0.5));
+    requestVr();
+  });
+  wrap.addEventListener('pointerup', ()=>{ drag=null; wrap.classList.remove('drag'); requestVr(true); });
+  wrap.addEventListener('wheel', e=>{ e.preventDefault(); if(e.deltaY===0) return;
+    requestAnimationFrame(()=>{ p.zoom = Math.min(3, Math.max(0.5, p.zoom * Math.exp(-e.deltaY*0.0015))); draw3D(); });
+  }, {passive:false});
+  wrap.addEventListener('dblclick', ()=>{ p.zoom=1; draw3D(); });
+  $('#th').addEventListener('input', e=>{ state.vr.th = +e.target.value; requestVr(); });
+  $('#op').addEventListener('input', e=>{ state.vr.op = +e.target.value/100; requestVr(); });
+  $('#btnSpin').addEventListener('click', e=>{
+    state.vr.spin = !state.vr.spin;
+    e.target.classList.toggle('on', state.vr.spin);
+    if(state.vr.spin) spinLoop();
+  });
+  new ResizeObserver(()=>draw3D()).observe(wrap);
+}
+
+function spinLoop(){
+  if(!state.vr.spin) return;
+  state.vr.az += 2.5;
+  requestVr();
+  setTimeout(spinLoop, 120);
+}
+
+function requestVr(hi){
+  vrPending = true;
+  if(vrBusy) return;
+  vrBusy = true; vrPending = false;
+  const q = hi ? 2 : 3;      // 拖动时用低分辨率，松开用高分辨率
+  const {az, el, th, op} = state.vr;
+  const url = `/api/vr?az=${az.toFixed(1)}&el=${el.toFixed(1)}&th=${th}&op=${op}&q=${q}`;
+  const img = new Image();
+  img.onload = ()=>{
+    window._p3.img = img; draw3D();
+    $('#vrInfo').textContent = `${Math.round(az)%360}°`;
+    msg('');
+    vrBusy = false;
+    if(vrPending) requestVr(hi);
+  };
+  img.onerror = ()=>{ vrBusy=false; };
+  msg('3D 渲染中…');
+  img.src = url;
+}
+
+function draw3D(){
+  const p = window._p3; if(!p) return;
+  const r = p.cv.getBoundingClientRect();
+  const dpr = Math.min(2, window.devicePixelRatio||1);
+  const W = Math.round(r.width*dpr), H = Math.round(r.height*dpr);
+  if(p.cv.width!==W || p.cv.height!==H){ p.cv.width=W; p.cv.height=H; }
+  p.ctx.fillStyle='#04070a'; p.ctx.fillRect(0,0,W,H);
+  if(!p.img) return;
+  const Hdraw = H - 34*(dpr);            // 底部留给控制条
+  const fit = Math.min(W/p.img.width, Hdraw/p.img.height)*p.zoom;
+  const tw = p.img.width*fit, th = p.img.height*fit;
+  p.ctx.imageSmoothingEnabled = true; p.ctx.imageSmoothingQuality='high';
+  const x0 = (W-tw)/2, y0 = (Hdraw-th)/2;
+  p.ctx.drawImage(p.img, x0, y0, tw, th);
+
+  if(state.marks){
+    const dpr2 = Math.min(2, window.devicePixelRatio||1);
+    const fs = 13*dpr2;
+    p.ctx.font = `700 ${fs}px -apple-system,"PingFang SC",sans-serif`;
+    p.ctx.textAlign='center'; p.ctx.textBaseline='middle';
+    const flipped = Math.cos(state.vr.az*Math.PI/180) < 0;
+    const chip3 = (t,x,y,col)=>{ const w=p.ctx.measureText(t).width;
+      p.ctx.fillStyle='rgba(0,0,0,.62)'; p.ctx.fillRect(x-w/2-5*dpr2, y-fs*0.78, w+10*dpr2, fs*1.56);
+      p.ctx.fillStyle=col; p.ctx.fillText(t,x,y); };
+    const gL = x0, gR = W - (x0 + tw);
+    const lx = gL > 46*dpr2 ? x0/2 : Math.max(18*dpr2, x0 + 18*dpr2);
+    const rx = gR > 46*dpr2 ? (x0 + tw) + gR/2 : Math.min(W - 18*dpr2, x0 + tw - 18*dpr2);
+    chip3(flipped?'L':'R', lx, Hdraw/2, '#ffce4d');
+    chip3(flipped?'R':'L', rx, Hdraw/2, '#ff8a8a');
+  }
+}
+
+// ---------- 交互 ----------
+document.querySelectorAll('[data-w]').forEach(b=>b.addEventListener('click',()=>{
+  state.W = +b.dataset.w; state.L = +b.dataset.l; redrawAll(); updateWL();
+}));
+document.querySelectorAll('[data-th]').forEach(b=>b.addEventListener('click',()=>{
+  state.vr.th = +b.dataset.th; state.vr.op = +b.dataset.op;
+  $('#th').value = state.vr.th; $('#op').value = state.vr.op*100;
+  requestVr();
+}));
+$('#btnMarks').addEventListener('click', e=>{
+  state.marks = !state.marks;
+  e.target.classList.toggle('on', state.marks);
+  redrawAll(); draw3D();
+});
+$('#btnReset').addEventListener('click',()=>{
+  for(const k in panes){ state.zoom[k]=1; state.off[k]=[0,0]; }
+  state.vr.az=0; state.vr.el=0;
+  window._p3.zoom = 1;
+  redrawAll(); requestVr(true); toast('视角已重置');
+});
+$('#btnSave').addEventListener('click', ()=>{
+  const pane = document.querySelector('.pane.active') || document.getElementById('pz');
+  const cv = pane.querySelector('canvas');
+  const a = document.createElement('a');
+  a.download = `CT_${Date.now()}.png`;
+  a.href = cv.toDataURL('image/png');
+  document.body.appendChild(a); a.click(); a.remove();
+  toast('已导出 PNG');
+});
+document.querySelectorAll('.pane').forEach(el=>el.addEventListener('pointerdown',()=>{
+  document.querySelectorAll('.pane').forEach(x=>x.classList.remove('active'));
+  el.classList.add('active');
+}));
+window.addEventListener('keydown', e=>{
+  const step = e.shiftKey?10:1;
+  if(e.key==='ArrowRight'||e.key==='ArrowLeft'){
+    const axis = document.querySelector('.pane.active')?.id.slice(1) || 'z';
+    const n = axis==='z'?state.shape[0]:state.shape[1];
+    state.pos[axis] = Math.min(n-1, Math.max(0, state.pos[axis] + (e.key==='ArrowRight'?step:-step)));
+    refreshAll(); e.preventDefault();
+  }
+  if(e.key==='ArrowUp'||e.key==='ArrowDown'){
+    state.pos.z = Math.min(state.shape[0]-1, Math.max(0, state.pos.z + (e.key==='ArrowDown'?step:-step)));
+    refreshAll(); e.preventDefault();
+  }
+});
+init().catch(e=>{ $('#loadtxt').textContent = '出错: '+e.message; console.error(e); });
+</script>
+</body>
+</html>

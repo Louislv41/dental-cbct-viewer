@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+*.log
+.DS_Store
+# 原始 DICOM 数据与患者影像不纳入版本库
+*.dcm
+导出图/
+mpr/
+_frames/
