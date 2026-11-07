@@ -249,8 +249,8 @@ function setCrosshairFromPixel(p, px, py){
   const ix = (cx-ox)/scale, iy = (cy-oy)/scale;
   if(ix<0||iy<0||ix>=p.iw||iy>=p.ih) return;
   if(p.axis==='z'){ state.pos.x = Math.round(ix); state.pos.y = Math.round(iy); }
-  else if(p.axis==='y'){ state.pos.x = Math.round(ix); state.pos.z = Math.round((p.ih-1)-iy); }
-  else { state.pos.y = Math.round(ix); state.pos.z = Math.round((p.ih-1)-iy); }
+  else if(p.axis==='y'){ state.pos.x = Math.round(ix); state.pos.z = Math.round(zFlipped() ? (p.ih-1)-iy : iy); }
+  else { state.pos.y = Math.round(ix); state.pos.z = Math.round(zFlipped() ? (p.ih-1)-iy : iy); }
   // 注意：冠状/矢状画布做了上下翻转，z 需要反算
   refreshAll();
 }
@@ -324,8 +324,8 @@ function drawPane(p){
   const dpr = Math.min(2, window.devicePixelRatio||1);
   let ix, iy;
   if(p.axis==='z'){ ix=state.pos.x; iy=state.pos.y; }
-  else if(p.axis==='y'){ ix=state.pos.x; iy=(p.ih-1)-state.pos.z; }
-  else { ix=state.pos.y; iy=(p.ih-1)-state.pos.z; }
+  else if(p.axis==='y'){ ix=state.pos.x; iy = zFlipped() ? (p.ih-1)-state.pos.z : state.pos.z; }
+  else { ix=state.pos.y; iy = zFlipped() ? (p.ih-1)-state.pos.z : state.pos.z; }
   const px = ox + ix*scale, py = oy + iy*scale;
   c.save();
   c.strokeStyle='rgba(67,217,192,.75)'; c.lineWidth=1*dpr;
@@ -348,7 +348,27 @@ function drawPane(p){
 }
 
 // 画 R/L、前/后、上/下 方位标记
-// 水平方向：优先落在图像两侧的空白里（紧贴图像、绝不压解剖）；没有空白就贴在窗格边缘
+// 标签不是写死的：由 /api/info 里的 orient（从 DICOM 方向字段算出）决定
+function orientLabels(axis){
+  const o = (state.info && state.info.orient) || {x_to_right:false, y_to_post:true, z_to_sup:true};
+  let hl, hr, vl, vr;
+  if(axis === 'x'){                       // 矢状位：水平轴 = 体数据 y
+    hl = o.y_to_post ? '前 A' : '后 P';
+    hr = o.y_to_post ? '后 P' : '前 A';
+  } else {                                // 轴位/冠状位：水平轴 = 体数据 x
+    hl = o.x_to_right ? 'L' : 'R';      // 屏幕左
+    hr = o.x_to_right ? 'R' : 'L';      // 屏幕右
+  }
+  if(axis === 'z'){                       // 轴位：垂直轴 = 体数据 y
+    vl = o.y_to_post ? '前 A' : '后 P';
+    vr = o.y_to_post ? '后 P' : '前 A';
+  } else {                                // 冠状/矢状：垂直轴 = 体数据 z
+    vl = o.z_to_sup ? '上 S' : '下 I';
+    vr = o.z_to_sup ? '下 I' : '上 S';
+  }
+  return {hl, hr, vl, vr};
+}
+
 function drawMarks(p, g){
   const c = p.ctx;
   const dpr = Math.min(2, window.devicePixelRatio||1);
@@ -368,18 +388,15 @@ function drawMarks(p, g){
   const leftX  = gapL > 46*dpr ? g.ox/2 : Math.max(18*dpr, g.ox + 18*dpr);
   const rightX = gapR > 46*dpr ? (g.ox + g.tw) + gapR/2 : Math.min(g.W - 18*dpr, g.ox + g.tw - 18*dpr);
 
-  let hl, hr, hcol = '#ffce4d';
-  if(p.axis === 'x'){ hl = '前 A'; hr = '后 P'; }     // 矢状位：左前右后
-  else { hl = 'R'; hr = 'L'; }                        // 轴位/冠状位：左屏=患者右
-  chip(hl, leftX, g.H/2, hcol);
-  chip(hr, rightX, g.H/2, '#ff8a8a');
-
-  let vl, vr, vcol = '#7fc4ff';
-  if(p.axis === 'z'){ vl = '前 A'; vr = '后 P'; }     // 轴位：上前下后
-  else { vl = '上 S'; vr = '下 I'; }
-  chip(vl, g.W/2, 18*dpr, vcol);
-  chip(vr, g.W/2, g.H - 18*dpr, '#9aa8b8');
+  const L = orientLabels(p.axis);
+  chip(L.hl, leftX, g.H/2, '#ffce4d');
+  chip(L.hr, rightX, g.H/2, '#ff8a8a');
+  chip(L.vl, g.W/2, 18*dpr, '#7fc4ff');
+  chip(L.vr, g.W/2, g.H - 18*dpr, '#9aa8b8');
 }
+
+// 体数据 z 索引 <-> 画面 y 像素（是否翻转也由方向字段决定）
+function zFlipped(){ return !((state.info && state.info.orient) && state.info.orient.z_to_sup === false); }
 
 function redrawAll(){ for(const k in panes) drawPane(panes[k]); }
 
@@ -474,14 +491,16 @@ function draw3D(){
     p.ctx.font = `700 ${fs}px -apple-system,"PingFang SC",sans-serif`;
     p.ctx.textAlign='center'; p.ctx.textBaseline='middle';
     const flipped = Math.cos(state.vr.az*Math.PI/180) < 0;
+    const xsRight = !!(state.info && state.info.orient && state.info.orient.x_to_right);
+    const rightIsR = (xsRight !== flipped);
     const chip3 = (t,x,y,col)=>{ const w=p.ctx.measureText(t).width;
       p.ctx.fillStyle='rgba(0,0,0,.62)'; p.ctx.fillRect(x-w/2-5*dpr2, y-fs*0.78, w+10*dpr2, fs*1.56);
       p.ctx.fillStyle=col; p.ctx.fillText(t,x,y); };
     const gL = x0, gR = W - (x0 + tw);
     const lx = gL > 46*dpr2 ? x0/2 : Math.max(18*dpr2, x0 + 18*dpr2);
     const rx = gR > 46*dpr2 ? (x0 + tw) + gR/2 : Math.min(W - 18*dpr2, x0 + tw - 18*dpr2);
-    chip3(flipped?'L':'R', lx, Hdraw/2, '#ffce4d');
-    chip3(flipped?'R':'L', rx, Hdraw/2, '#ff8a8a');
+    chip3(rightIsR?'L':'R', lx, Hdraw/2, '#ffce4d');
+    chip3(rightIsR?'R':'L', rx, Hdraw/2, '#ff8a8a');
   }
 }
 

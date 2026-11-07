@@ -39,11 +39,15 @@ def jpg_bytes(arr, q=92):
 
 
 def get_slice(axis, idx):
+    """按 DICOM 方向字段决定是否需要上下翻转，保证画面顶部是"上"。"""
     with LOCK:
         v = VOL
-        if axis == 'z':   return v[idx, :, :]
-        if axis == 'y':   return np.flipud(v[:, idx, :])
-        return np.flipud(v[:, :, idx])
+        fz = INFO.get('orient', {}).get('z_to_sup', True)
+        if axis == 'z':
+            return v[idx, :, :]
+        if axis == 'y':
+            return np.flipud(v[:, idx, :]) if fz else v[:, idx, :]
+        return np.flipud(v[:, :, idx]) if fz else v[:, :, idx]
 
 
 def lowres(factor):
